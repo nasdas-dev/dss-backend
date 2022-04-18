@@ -1,7 +1,7 @@
 const express = require("express");
 const app = express();
-
 const mongoose = require("mongoose");
+const qData = require("./data.json");
 
 if (process.argv.length < 3) {
   console.log(
@@ -16,15 +16,7 @@ const url = `mongodb+srv://dario:${password}@ransomware-dss.l5t1r.mongodb.net/my
 
 mongoose.connect(url);
 
-const qSchema = new mongoose.Schema({
-  id: Number,
-  question: String,
-  weight: Number,
-  answers: [String],
-  answerType: String,
-});
-
-const Question = mongoose.model("Question", qSchema);
+const Question = require("./models/Question");
 
 app.use(function (req, res, next) {
   res.header("Access-Control-Allow-Origin", "http://localhost:3000"); // update to match the domain you will make the request from
@@ -35,14 +27,19 @@ app.use(function (req, res, next) {
   next();
 });
 
-qData = require("./data.json");
-
 qData.forEach((q) => {
-  let newQ = new Question({
+  const newQ = new Question({
     id: q.id,
+    category: q.category,
     question: q.question,
     weight: q.weight,
     answers: q.answers,
+    rationale: q.rationale,
+    resultMap: q.resultMap,
+    bestpractice: q.bestpractice,
+    role: q.role,
+    applicability: q.applicability,
+    special_action: q.special_action,
     answerType: q.answerType,
   });
   newQ.save();

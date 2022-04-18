@@ -16,13 +16,30 @@ const dbo = require("../db/conn");
 const UserAnswer = require("../models/UserAnswer").UserAnswer;
 const User = require("../models/User");
 const { mongoose } = require("mongoose");
+const Question = require("../models/Question");
+const { syncBuiltinESMExports } = require("module");
+const { evaluateAssessmentResultForUser } = require("../logic/evaluate");
+const res = require("express/lib/response");
 
-const createUser = function (name, email, password, answer) {
+const createUser = function (
+  name,
+  email,
+  password,
+  answer,
+  totalPenaltyPoints,
+  environment,
+  role
+) {
   const user = new User({
     name,
     email,
     password,
     answer,
+    totalPenaltyPoints,
+    environment,
+    role,
+    manages: [],
+    managedBy: [],
   });
   return user.save();
 };
@@ -45,50 +62,57 @@ app.use(function (req, res, next) {
 });
 
 // This section will help you get a list of all the records.
-recordRoutes.route("/api/v1/questions").get(function (req, res) {
-  let db_connect = dbo.getDb("myFirstDatabase");
-  db_connect
-    .collection("questions")
-    .find({})
-    .toArray(function (err, result) {
-      if (err) throw err;
-      res.json(result);
-    });
-});
-
-// This section will help you get a single record by id
-recordRoutes.route("/api/v1/record/:id").get(function (req, res) {
-  let db_connect = dbo.getDb();
-  let myquery = { _id: ObjectId(req.params.id) };
-  db_connect.collection("records").findOne(myquery, function (err, result) {
+recordRoutes.route("/api/v1/questions").get(verifyJWT, function (req, res) {
+  Question.find({}, function (err, result) {
     if (err) throw err;
     res.json(result);
   });
 });
 
-recordRoutes.route("/api/v1/users").get(function (req, res) {
-  let db_connect = dbo.getDb("myFirstDatabase");
-  db_connect
-    .collection("users")
-    .find({})
-    .toArray(function (err, result) {
+recordRoutes.route("/api/v1/answer").get(function (req, res) {
+  UserAnswer.find({}, function (err, result) {
+    if (err) throw err;
+
+    res.json(result);
+  });
+});
+recordRoutes.route("/api/v1/users").get(verifyJWT, function (req, res) {
+  User.find({}, function (err, result) {
+    if (err) throw err;
+    res.json(result);
+  });
+});
+
+recordRoutes.route("/api/v1/users/:uId").get(verifyJWT, function (req, res) {
+  User.find({ id: req.params.uId }, function (err, user) {
+    if (err) throw err;
+    if (user.length === 0) {
+      res.status(404).send("User not found");
+    }
+    res.status(200);
+    res.json(user);
+  });
+});
+
+recordRoutes.route("/api/v1/users/:uId").post(verifyJWT, function (req, res) {
+  User.findOneAndUpdate(
+    { _id: req.params.uId },
+    {
+      manages: req.body.manages,
+      managedBy: req.body.managedBy,
+    },
+    { new: true, upsert: true },
+    function (err, user) {
       if (err) throw err;
+
       res.status(200);
-      res.json(result);
-    });
+      res.json(user);
+    }
+  );
 });
 
 // This section will help you create a new record.
 recordRoutes.route("/api/v1/users").post(function (req, response) {
-  // let db_connect = dbo.getDb()
-
-  // let newUser = {
-  //   _id: ObjectId(req.params.id),
-  //   name: req.body.name,
-  //   email: req.body.email,
-  //   password: req.body.password,
-  // };
-
   const saltRounds = 10;
   bcrypt.hash(req.body.password, saltRounds, (err, hash) => {
     if (err) throw err;
@@ -96,7 +120,30 @@ recordRoutes.route("/api/v1/users").post(function (req, response) {
     let emptyAnswer = {};
     createUserAnswer(emptyAnswer)
       .then((u) => {
-        return createUser(req.body.name, req.body.email, hash, u);
+        let userRole = "";
+        let userEnvironment = "";
+        switch (req.body.role) {
+          case "Administrator":
+            userRole = "admin";
+          case "Standard User":
+            userRole = "user";
+        }
+        switch (req.body.environment) {
+          case "Organisation":
+            userEnvironment = "org";
+          case "Private Usage":
+            userEnvironment = "ind";
+        }
+
+        return createUser(
+          req.body.name,
+          req.body.email,
+          hash,
+          u,
+          -1,
+          userEnvironment,
+          userRole
+        );
       })
       .then((answer) => {
         console.log("created new answer object", answer);
@@ -107,61 +154,106 @@ recordRoutes.route("/api/v1/users").post(function (req, response) {
         });
       })
       .catch((err) => console.log(err));
-
-    // db_connect.collection("users").insertOne(newUser, function (err, res) {
-    //   if (err) throw err;
-    //   response.status(200);
-    //   response.json(res);
-    // });
   });
 });
+
+recordRoutes.route("/api/v1/whoami").get(verifyJWT, function (req, response) {
+  User.findOne({ email: req.user.email }, function (err, user) {
+    if (err) throw err;
+    console.log(req.user);
+    console.log(1);
+    console.log(user);
+    response.status(200);
+    response.json(user);
+  });
+});
+
 function generateToken(user) {
   dotenv.parsed;
-  return jwt.sign(user, process.env.TOKEN_SECRET, {
+  return jwt.sign({ user }, process.env.TOKEN_SECRET, {
     expiresIn: "3600s",
   });
 }
 
+function verifyJWT(req, res, next) {
+  const token = req.headers["x-access-token"]?.split(" ")[1];
+  if (token) {
+    jwt.verify(token, process.env.TOKEN_SECRET, (err, decoded) => {
+      if (err) {
+        return res.json({
+          isLoggedIn: false,
+          message: "Auth failed",
+          status: 401,
+        });
+      }
+      req.user = decoded.user;
+      console.log("-----------------------------------------------ver");
+      console.log(req.user);
+      next();
+    });
+  } else {
+    return res.json({
+      isLoggedIn: false,
+      message: "Incrorrect token",
+      status: 401,
+    });
+  }
+}
+
 // This section will help you login into your account.
 recordRoutes.route("/api/v1/login").post(function (req, response) {
-  let db_connect = dbo.getDb("myFirstDatabase");
-  db_connect
-    .collection("users")
-    .findOne({ user_email: req.body.email }, function (err, db_user) {
-      if (err) throw err;
-      if (db_user) {
-        bcrypt.compare(
-          req.body.password,
-          db_user.user_password,
-          function (err, res) {
-            if (err) throw err;
-            if (res) {
-              let returnUser = {
-                uid: db_user._id,
-                email: db_user.user_email,
-                token: generateToken(db_user),
-              };
-              response.status(200);
-              response.json(returnUser);
-            } else {
-              response.status(401);
-              response.json({ message: "Invalid password" });
-            }
-          }
-        );
-      } else {
-        response.status(401);
-        response.json({ message: "Invalid email" });
-      }
-    });
-});
+  User.findOne({ email: req.body.email }, function (err, user) {
+    if (err) throw err;
+    if (!user) {
+      response.status(401);
+      response.json({
+        message: "Authentication failed. User not found.",
+        status: 401,
+      });
+    } else {
+      bcrypt.compare(req.body.password, user.password, function (err, result) {
+        if (err) throw err;
+        if (result) {
+          const token = generateToken(user);
 
-recordRoutes.route("/api/v1/assessment").post(function (req, response) {
-  let db_connect = dbo.getDb("myFirstDatabase");
+          response.status(200);
+          response.json({
+            message: "Authentication successful.",
+            token: "Bearer " + token,
+            status: 200,
+          });
+        } else {
+          response.status(401);
+          response.json({
+            message: "Authentication failed. Wrong password.",
+            status: 401,
+          });
+        }
+      });
+    }
+  });
+});
+recordRoutes.route("/api/v1/assessment").post(verifyJWT, function (req, res) {
   let newAssessment = req.body.answers;
-  let user = req.body.user;
-  console.log(newAssessment);
-  console.log(user);
+  let newAnswer = new UserAnswer({
+    answer: newAssessment,
+  });
+  newAnswer.save(function (err, result) {
+    if (err) throw err;
+  });
+
+  User.findOneAndUpdate(
+    { _id: req.user._id },
+    { answer: newAnswer },
+    { new: true, upsert: true, populate: "answer" },
+    function (err, doc) {
+      if (err) throw err;
+      console.log(doc);
+      res.json(doc);
+
+      evaluateAssessmentResultForUser(doc);
+    }
+  );
 });
 
 module.exports = recordRoutes;
