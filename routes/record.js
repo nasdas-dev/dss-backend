@@ -27,6 +27,8 @@ const createUser = function (
   password,
   answer,
   totalPenaltyPoints,
+  techStack,
+  elearningStatus,
   environment,
   role
 ) {
@@ -36,6 +38,8 @@ const createUser = function (
     password,
     answer,
     totalPenaltyPoints,
+    techStack,
+    elearningStatus,
     environment,
     role,
     manages: [],
@@ -95,21 +99,52 @@ recordRoutes.route("/api/v1/users/:uId").get(verifyJWT, function (req, res) {
 });
 
 recordRoutes.route("/api/v1/users/:uId").post(verifyJWT, function (req, res) {
-  User.findOneAndUpdate(
-    { _id: req.params.uId },
-    {
-      manages: req.body.manages,
-      managedBy: req.body.managedBy,
-    },
-    { new: true, upsert: true },
-    function (err, user) {
-      if (err) throw err;
+  User.findById(req.body.manages, (err, user) => {
+    if (user) {
+      User.findById(req.params.uId, (err, user2) => {
+        if (user2 && !user2.manages.includes(req.body.manages)) {
+          User.findOneAndUpdate(
+            { _id: req.params.uId },
+            { $push: { manages: req.body.manages } },
+            { new: true, upsert: true },
+            function (err, user) {
+              if (err) throw err;
 
-      res.status(200);
-      res.json(user);
+              res.status(200);
+              res.json(user);
+            }
+          );
+        } else {
+          res.status(400).send("User already manages this user");
+        }
+      });
+    } else {
+      res.status(400).send("User not found");
     }
-  );
+  });
 });
+
+recordRoutes
+  .route("/api/v1/users/:uId/elearning")
+  .post(verifyJWT, function (req, res) {
+    User.findById(req.params.uId, (err, user2) => {
+      if (user2) {
+        User.findOneAndUpdate(
+          { _id: req.params.uId },
+          { $push: { elearningStatus: req.body.elearning } },
+          { new: true, upsert: true },
+          function (err, user) {
+            if (err) throw err;
+
+            res.status(200);
+            res.json(user);
+          }
+        );
+      } else {
+        res.status(404).send("No user found.");
+      }
+    });
+  });
 
 // This section will help you create a new record.
 recordRoutes.route("/api/v1/users").post(function (req, response) {
@@ -141,6 +176,8 @@ recordRoutes.route("/api/v1/users").post(function (req, response) {
           hash,
           u,
           -1,
+          [],
+          [],
           userEnvironment,
           userRole
         );
@@ -167,6 +204,16 @@ recordRoutes.route("/api/v1/whoami").get(verifyJWT, function (req, response) {
     response.json(user);
   });
 });
+
+recordRoutes
+  .route("/api/v1/whoismanaged")
+  .get(verifyJWT, function (req, response) {
+    User.findOne({ id: req.body.manages }, function (err, user) {
+      if (err) throw err;
+      response.status(200);
+      response.json(user);
+    });
+  });
 
 function generateToken(user) {
   dotenv.parsed;
@@ -219,6 +266,7 @@ recordRoutes.route("/api/v1/login").post(function (req, response) {
           response.status(200);
           response.json({
             message: "Authentication successful.",
+            uid: user.id,
             token: "Bearer " + token,
             status: 200,
           });

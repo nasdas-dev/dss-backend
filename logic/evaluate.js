@@ -2,6 +2,8 @@ const Question = require("../models/Question");
 const User = require("../models/User");
 
 let totalPenaltyPoints = 0;
+let errors = [];
+let techStack = [];
 
 function evaluateAssessmentResultForUser(u) {
   let userAnswers = u.answer.answer;
@@ -28,6 +30,10 @@ function evaluateAssessmentResultForUser(u) {
               userAnswers[answeredQuestion][answerOption]
           );
 
+          if (question.special_action === "populate_techstack") {
+            techStack.push(userAnswers[answeredQuestion][answerOption]);
+          }
+
           if (userAnswers[answeredQuestion][answerOption] === true) {
             if (question.resultMap[answerOption[0]] === undefined) {
               return;
@@ -36,11 +42,23 @@ function evaluateAssessmentResultForUser(u) {
             totalPenaltyPoints +=
               question.weight *
               question.resultMap[answerOption][Number(answerOption) + 1];
+
+            if (
+              question.resultMap[answerOption][Number(answerOption) + 1] != 0
+            ) {
+              if (!errors.includes(question.id)) {
+                errors.push(question.id);
+              }
+            }
           }
         }
         User.findOneAndUpdate(
           { _id: u._id },
-          { totalPenaltyPoints: totalPenaltyPoints },
+          {
+            totalPenaltyPoints: totalPenaltyPoints,
+            errors: errors,
+            techStack: techStack,
+          },
           { new: true, upsert: true, populate: "answer" },
           function (err, doc) {
             if (err) throw err;
